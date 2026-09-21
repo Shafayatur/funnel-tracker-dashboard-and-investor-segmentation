@@ -18,6 +18,7 @@ import plotly.express as px
 import streamlit as st
 
 from pdf_utils import render_pdf_export_section
+import sheets_source
 
 # Expected columns from the IR team's daily tracking sheet.
 # Keys = canonical internal name, Values = possible header text variants
@@ -667,19 +668,34 @@ def render():
     st.title("📊 WeGro — CF Update Tracker Dashboard (IR)")
     st.caption("Internal use only.")
 
-    uploaded_file = st.file_uploader(
-        "CF Update Tracker file (.xlsx, .xls, or .csv)", type=["xlsx", "xls", "csv"], key="funnel_uploader"
-    )
+    data_source = st.sidebar.radio("Data source", ["Live Google Sheet", "Upload file"])
 
-    if not uploaded_file:
-        st.info("Waiting for a file to be uploaded.")
-        return
+    if data_source == "Live Google Sheet":
+        st.sidebar.caption("Live data may be up to 5 minutes stale.")
+        if st.sidebar.button("🔄 Refresh now"):
+            st.cache_data.clear()
+            st.rerun()
+        try:
+            headerless_df = sheets_source.load_sheet_raw(
+                st.secrets["ir_master_files_url"], "CF Update Tracker"
+            )
+        except Exception as e:
+            st.error(f"Could not load the Google Sheet. Details: {e}")
+            return
+    else:
+        uploaded_file = st.file_uploader(
+            "CF Update Tracker file (.xlsx, .xls, or .csv)", type=["xlsx", "xls", "csv"], key="funnel_uploader"
+        )
 
-    try:
-        headerless_df = load_raw(uploaded_file.getvalue(), uploaded_file.name)
-    except Exception as e:
-        st.error(f"Could not read the uploaded file. Make sure it's a valid Excel or CSV file. Details: {e}")
-        return
+        if not uploaded_file:
+            st.info("Waiting for a file to be uploaded.")
+            return
+
+        try:
+            headerless_df = load_raw(uploaded_file.getvalue(), uploaded_file.name)
+        except Exception as e:
+            st.error(f"Could not read the uploaded file. Make sure it's a valid Excel or CSV file. Details: {e}")
+            return
 
     if headerless_df.empty:
         st.error("The uploaded file appears to be empty.")
