@@ -341,6 +341,23 @@ def investment_vs_target_chart(df: pd.DataFrame, monthly_target: float):
     return fig
 
 
+def registrations_chart(df: pd.DataFrame):
+    if "registrations" not in df.columns or df["registrations"].dropna().empty:
+        return None
+    total = df["registrations"].sum()
+    fig = px.bar(
+        df,
+        x="day",
+        y="registrations",
+        title=f"Daily Registrations (Total: {total:,.0f})",
+        color_discrete_sequence=["#4C72B0"],
+        text="registrations",
+    )
+    fig.update_traces(textposition="outside")
+    fig.update_layout(height=350, xaxis_title="Day", yaxis_title="Registrations")
+    return fig
+
+
 def payables_chart(df: pd.DataFrame):
     if "payables" not in df.columns or df["payables"].dropna().empty:
         return None
@@ -509,6 +526,27 @@ def period_investment_comparison_chart(summary_df: pd.DataFrame, granularity: st
         color_discrete_sequence=["#4C72B0"],
     )
     fig.update_layout(height=420, xaxis_title=granularity[:-2] if granularity != "Daily" else "Day", yaxis_title="Investment Value (Tk)")
+    return fig
+
+
+def period_registrations_comparison_chart(summary_df: pd.DataFrame, granularity: str):
+    if "registrations" not in summary_df.columns:
+        return None
+    total = summary_df["registrations"].sum()
+    fig = px.bar(
+        summary_df,
+        x="period_label",
+        y="registrations",
+        title=f"Registrations Comparison Across {granularity} Periods (Total: {total:,.0f})",
+        color_discrete_sequence=["#4C72B0"],
+        text="registrations",
+    )
+    fig.update_traces(textposition="outside")
+    fig.update_layout(
+        height=420,
+        xaxis_title=granularity[:-2] if granularity != "Daily" else "Day",
+        yaxis_title="Registrations",
+    )
     return fig
 
 
@@ -792,6 +830,12 @@ def render():
         st.plotly_chart(funnel_fig, use_container_width=True)
         comparison_figures.append(funnel_fig)
 
+        st.subheader("Registrations")
+        registrations_comparison_fig = period_registrations_comparison_chart(summary_df, granularity)
+        if registrations_comparison_fig:
+            st.plotly_chart(registrations_comparison_fig, use_container_width=True)
+            comparison_figures.append(registrations_comparison_fig)
+
         st.subheader("Funnel Efficiency")
         conv_fig = period_conversion_rate_chart(derived_df, granularity)
         st.plotly_chart(conv_fig, use_container_width=True)
@@ -914,6 +958,11 @@ def render():
     trend_fig = trend_chart(df)
     st.plotly_chart(trend_fig, use_container_width=True)
     report_figures.append(trend_fig)
+
+    registrations_fig = registrations_chart(df)
+    if registrations_fig:
+        st.plotly_chart(registrations_fig, use_container_width=True)
+        report_figures.append(registrations_fig)
 
     invest_target_fig = investment_vs_target_chart(df, monthly_target)
     st.plotly_chart(invest_target_fig, use_container_width=True)
