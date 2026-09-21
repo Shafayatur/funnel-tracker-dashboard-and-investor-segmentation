@@ -25,7 +25,29 @@ st.set_page_config(
 )
 
 
+def check_passkey():
+    if st.session_state.get("authenticated") is True:
+        return True
+
+    st.sidebar.title("📊 WeGro IR Dashboard")
+    passkey = st.sidebar.text_input("Passkey", type="password")
+
+    if not passkey:
+        st.info("Enter the passkey in the sidebar to continue.")
+        return False
+
+    if passkey == st.secrets.get("APP_PASSKEY", ""):
+        st.session_state["authenticated"] = True
+        st.rerun()
+
+    st.sidebar.error("Incorrect passkey.")
+    return False
+
+
 def main():
+    if not check_passkey():
+        return
+
     # A sidebar radio, rather than st.tabs(), is important here: st.tabs()
     # runs the code inside every tab on every rerun (tabs only control
     # which main-content area is visually shown), so both pages'

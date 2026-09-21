@@ -31,6 +31,12 @@ streamlit run app.py
 
 Then upload any daily-tracking spreadsheet that has a "Day" column plus any of the recognized funnel metric columns.
 
+## Auth
+
+The dashboard requires a shared passkey. Configure it through `st.secrets`: use `.streamlit/secrets.toml` for local development, or **Settings → Secrets** in Streamlit Cloud.
+
+This is a single-shared-passkey demo pattern with no per-user audit trail. It should not be used as-is for handling sensitive investor data.
+
 ## Note
 
 Built during an AI/prompt-engineering internship for internal investor-relations reporting. This repo is the general-purpose data-processing and dashboarding logic — no company data, spreadsheets, or credentials are included.
