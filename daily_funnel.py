@@ -320,24 +320,98 @@ def investor_mix_donut(df: pd.DataFrame):
     return fig
 
 
-def investment_vs_target_chart(df: pd.DataFrame, monthly_target: float):
+def fmt_short(value, decimals: int = 2) -> str:
+    """Compact number label: 21110000 -> '21.11M', 1500 -> '1.50K', 850 -> '850'."""
+    if value is None or pd.isna(value):
+        return ""
+    sign = "-" if value < 0 else ""
+    a = abs(float(value))
+    for divisor, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if a >= divisor:
+            return f"{sign}{a / divisor:.{decimals}f}{suffix}"
+    return f"{sign}{a:,.0f}"
+
+
+def daily_investment_chart(df: pd.DataFrame):
+    """Daily Investment Value bars with compact labels (21.11M) on top -
+    same view as the Daily comparison, for Date range / Specific dates."""
+    if "investment_value" not in df.columns or df["investment_value"].dropna().empty:
+        return None
+
+    values = df["investment_value"]
+    labels = [fmt_short(v) if pd.notna(v) and v != 0 else "" for v in values]
+    fig = go.Figure(go.Bar(
+        x=df["day"], y=values,
+        marker_color="#4C72B0",  # explicit color - needed for PDF image export
+        text=labels, textposition="outside", cliponaxis=False,
+        textangle=-90 if len(df) > 20 else 0,  # avoid overlapping labels on long ranges
+        hovertemplate="%{x|%d-%b-%y}<br>Tk %{y:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=f"Daily Investment Value (Total: Tk {fmt_short(values.sum())})",
+        height=420, xaxis_title="Day", yaxis_title="Investment Value (Tk)",
+        yaxis=dict(tickformat="~s", range=[0, max(values.max(), 1) * 1.18]),
+    )
+    return fig
+
+
+def investment_vs_target_chart(df: pd.DataFrame, monthly_target: float, full_df: pd.DataFrame = None):
+    """Cumulative investment value vs monthly target, with % of target.
+
+    The target is monthly, so cumulative resets at the start of each calendar
+    month and is computed from full_df (month-to-date from day 1) - a filtered
+    range like 10-Aug..31-Aug therefore still shows true progress against the
+    Aug target. Pass full_df=None to accumulate only over the filtered rows."""
     if "investment_value" not in df.columns:
         return None
-    df = df.copy()
-    df["cumulative_value"] = df["investment_value"].fillna(0).cumsum()
+
+    src = (full_df if full_df is not None else df).sort_values("day").copy()
+    src["cumulative_value"] = (
+        src.groupby(src["day"].dt.to_period("M"))["investment_value"]
+        .transform(lambda s: s.fillna(0).cumsum())
+    )
+    plot = src[src["day"].isin(df["day"])]
+    if plot.empty:
+        return None
+
+    has_target = monthly_target > 0
+    cum = plot["cumulative_value"]
+    pct = (cum / monthly_target * 100) if has_target else None
+
+    customdata = [
+        [fmt_short(c), f"{p:.1f}%" if has_target else ""]
+        for c, p in zip(cum, pct if has_target else [0] * len(cum))
+    ]
+    hover = "%{x|%d-%b-%y}<br>Cumulative: Tk %{customdata[0]}"
+    if has_target:
+        hover += "<br>% of target: %{customdata[1]}"
+    hover += "<extra></extra>"
+
+    # Label only the latest point so the headline number is visible at a glance
+    last_label = f"Tk {fmt_short(cum.iloc[-1])}"
+    if has_target:
+        last_label += f" ({pct.iloc[-1]:.1f}% of target)"
+    point_text = [""] * (len(plot) - 1) + [last_label]
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df["day"], y=df["cumulative_value"], mode="lines+markers",
-        name="Cumulative Investment Value", line=dict(color="#4C72B0"),
-        fill="tozeroy",
+        x=plot["day"], y=cum, mode="lines+markers+text",
+        name="Cumulative Investment Value", line=dict(color="#4C72B0"), fill="tozeroy",
+        text=point_text, textposition="top left", cliponaxis=False,
+        customdata=customdata, hovertemplate=hover,
     ))
-    if monthly_target > 0:
+    if has_target:
         fig.add_hline(
             y=monthly_target, line_dash="dash", line_color="red",
-            annotation_text=f"Target: Tk {monthly_target:,.0f}", annotation_position="top left",
+            annotation_text=f"Target: Tk {fmt_short(monthly_target)}", annotation_position="top left",
         )
-    fig.update_layout(title="Cumulative Investment Value vs Monthly Target", xaxis_title="Day", yaxis_title="Value (Tk)", height=400)
+
+    y_top = max(cum.max(), monthly_target if has_target else 0, 1) * 1.15  # keep target line + label in view
+    fig.update_layout(
+        title="Cumulative Investment Value vs Monthly Target (month-to-date)",
+        xaxis_title="Day", yaxis_title="Value (Tk)", height=400,
+        yaxis=dict(tickformat="~s", range=[0, y_top]),
+    )
     return fig
 
 
@@ -520,12 +594,18 @@ def period_investment_comparison_chart(summary_df: pd.DataFrame, granularity: st
     # the default colorway here would silently bake in broken placeholder
     # colors (renders as solid black) whenever the chart is exported to a
     # static image outside that context, e.g. for the PDF report.
-    fig = px.bar(
-        summary_df, x="period_label", y="investment_value",
+    fig = go.Figure(go.Bar(
+        x=summary_df["period_label"], y=summary_df["investment_value"],
+        marker_color="#4C72B0",
+        text=[fmt_short(v) for v in summary_df["investment_value"]],
+        textposition="outside", cliponaxis=False,
+        hovertemplate="%{x}<br>Tk %{y:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(
         title=f"Investment Value Comparison Across {granularity} Periods",
-        color_discrete_sequence=["#4C72B0"],
+        height=420, xaxis_title=granularity[:-2] if granularity != "Daily" else "Day",
+        yaxis_title="Investment Value (Tk)", yaxis=dict(tickformat="~s"),
     )
-    fig.update_layout(height=420, xaxis_title=granularity[:-2] if granularity != "Daily" else "Day", yaxis_title="Investment Value (Tk)")
     return fig
 
 
@@ -563,15 +643,17 @@ def period_reinvestment_comparison_chart(summary_df: pd.DataFrame, granularity: 
     return fig
 
 
-def add_stack_total_labels(fig, x_labels, totals):
+def add_stack_total_labels(fig, x_labels, totals, compact: bool = False):
     """Adds a text annotation above each bar in a stacked chart showing the
     combined total (sum of all segments) - stacked bars only show each
     segment's own value on hover/inline, not the at-a-glance grand total,
-    so this makes the total readable without hovering."""
+    so this makes the total readable without hovering. compact=True formats
+    money totals as 21.11M; counts (investors) keep the full number."""
+    fmt = fmt_short if compact else (lambda t: f"{t:,.0f}")
     annotations = list(fig.layout.annotations) if fig.layout.annotations else []
     for x_val, total in zip(x_labels, totals):
         annotations.append(dict(
-            x=x_val, y=total, text=f"{total:,.0f}", showarrow=False,
+            x=x_val, y=total, text=fmt(total), showarrow=False,
             yshift=12, font=dict(size=12, color="#FFFFFF"),
         ))
     fig.update_layout(annotations=annotations)
@@ -594,9 +676,10 @@ def period_total_investment_stack_chart(summary_df: pd.DataFrame, granularity: s
     fig.update_layout(
         barmode="stack", title=f"Total Investment (Investment Value + Reinvestment) Across {granularity} Periods",
         height=420, xaxis_title=granularity[:-2] if granularity != "Daily" else "Day", yaxis_title="Total Investment (Tk)",
+        yaxis=dict(tickformat="~s"),
     )
     totals = summary_df["investment_value"].fillna(0) + summary_df["reinvestment"].fillna(0)
-    add_stack_total_labels(fig, summary_df["period_label"], totals)
+    add_stack_total_labels(fig, summary_df["period_label"], totals, compact=True)
     return fig
 
 
@@ -964,7 +1047,12 @@ def render():
         st.plotly_chart(registrations_fig, use_container_width=True)
         report_figures.append(registrations_fig)
 
-    invest_target_fig = investment_vs_target_chart(df, monthly_target)
+    daily_invest_fig = daily_investment_chart(df)
+    if daily_invest_fig:
+        st.plotly_chart(daily_invest_fig, use_container_width=True)
+        report_figures.append(daily_invest_fig)
+
+    invest_target_fig = investment_vs_target_chart(df, monthly_target, full_df=full_df)
     st.plotly_chart(invest_target_fig, use_container_width=True)
     report_figures.append(invest_target_fig)
 
