@@ -100,10 +100,12 @@ def categorize_product(name: str) -> str:
     return "Other"
 
 
-def preprocess(df: pd.DataFrame, start_date: pd.Timestamp | None) -> pd.DataFrame:
+def preprocess(df: pd.DataFrame, start_date: pd.Timestamp | None,
+               end_date: pd.Timestamp | None = None) -> pd.DataFrame:
     """Filter to valid status, convert dates, tag product category, and
-    optionally filter to a start date (based on order_created_at, which is
-    always fully populated - see notebook discussion on why)."""
+    optionally filter to a start/end date range (based on order_created_at,
+    which is always fully populated - see notebook discussion on why).
+    The end date is inclusive of the whole day."""
     df = df[df["status"].isin(VALID_STATUS)].copy()
 
     for col in DATE_COLS:
@@ -112,6 +114,11 @@ def preprocess(df: pd.DataFrame, start_date: pd.Timestamp | None) -> pd.DataFram
 
     if start_date is not None:
         df = df[df["order_created_at"] >= start_date].copy()
+
+    if end_date is not None:
+        # Inclusive end date: keep everything before midnight of the next day,
+        # so orders with a time component on the end date itself are kept.
+        df = df[df["order_created_at"] < end_date + pd.Timedelta(days=1)].copy()
 
     df["product_category"] = df["project_name"].apply(categorize_product)
 
@@ -264,9 +271,10 @@ def build_final_table(df_valid: pd.DataFrame, investor_summary: pd.DataFrame,
     return final
 
 
-def run_pipeline(raw_df: pd.DataFrame, start_date: pd.Timestamp | None):
+def run_pipeline(raw_df: pd.DataFrame, start_date: pd.Timestamp | None,
+                 end_date: pd.Timestamp | None = None):
     """End-to-end: raw upload -> (df_valid, final_table, combo_performance)."""
-    df_valid = preprocess(raw_df, start_date)
+    df_valid = preprocess(raw_df, start_date, end_date)
     investor_summary = build_investor_summary(df_valid)
     preference = build_preference(df_valid)
     combo_performance = build_combo_performance(df_valid)
@@ -376,6 +384,19 @@ def render_export_controls(df: pd.DataFrame, key_prefix: str, filename: str,
         f"Download {filename}", csv, filename, "text/csv", key=f"{key_prefix}_download"
     )
 
+
+def _period_label(start_date, end_date) -> str:
+    """Human-readable date range for the PDF subtitle."""
+    fmt = "%d %b %Y"
+    if start_date is not None and end_date is not None:
+        return f" | Investments from {start_date.strftime(fmt)} to {end_date.strftime(fmt)}"
+    if start_date is not None:
+        return f" | Investments from {start_date.strftime(fmt)} onward"
+    if end_date is not None:
+        return f" | Investments up to {end_date.strftime(fmt)}"
+    return ""
+
+
 def render():
     st.title("👥 WeGro — Investor Segmentation")
     st.caption("Internal use only. Upload the raw order export to segment investors by tier, product, and activity.")
@@ -398,7 +419,7 @@ def render():
         st.error(f"Uploaded file is missing expected columns: {missing}")
         return
 
-    # Date filter control
+    # Date filter controls (start + end = date range)
     st.sidebar.header("Segmentation Filters")
     use_start_date = st.sidebar.checkbox("Filter by start date", value=True)
     start_date = None
@@ -407,8 +428,26 @@ def render():
             st.sidebar.date_input("Include investments from", value=pd.Timestamp("2024-01-01").date())
         )
 
+    use_end_date = st.sidebar.checkbox("Filter by end date", value=True)
+    end_date = None
+    if use_end_date:
+        # Default to the latest order date in the file, so it starts out as "no cut-off".
+        _order_dates = pd.to_datetime(raw_df["order_created_at"], errors="coerce", dayfirst=True)
+        _default_end = _order_dates.max()
+        _default_end = _default_end.date() if pd.notna(_default_end) else datetime.now().date()
+        end_date = pd.Timestamp(
+            st.sidebar.date_input(
+                "Include investments up to",
+                value=_default_end,
+                key=f"seg_end_date_{uploaded_file.name}",
+            )
+        )
+        if start_date is not None and end_date < start_date:
+            st.sidebar.error("End date must be on or after the start date.")
+            return
+
     with st.spinner("Processing investors..."):
-        df_valid, final, combo_performance = run_pipeline(raw_df, start_date)
+        df_valid, final, combo_performance = run_pipeline(raw_df, start_date, end_date)
 
     if final.empty:
         st.warning("No valid investments found for the selected filters.")
@@ -420,9 +459,9 @@ def render():
     # because Streamlit only honors `value=` the first time a widget key
     # is created - it ignores it on every rerun after that, even if the
     # underlying `final` data has completely changed (e.g. toggling the
-    # start-date filter). Detect that the effective start date changed
+    # start/end-date filter). Detect that the effective date range changed
     # and clear the stored widget state so it re-derives from the new data.
-    filter_signature = str(start_date)
+    filter_signature = f"{start_date}|{end_date}"
     if st.session_state.get("_seg_filter_signature") != filter_signature:
         st.session_state.pop("seg_last_range", None)
         st.session_state.pop("seg_first_range", None)
@@ -581,7 +620,7 @@ def render():
         title="WeGro — Investor Segmentation Report",
         subtitle=(
             f"Snapshot as of {datetime.now().strftime('%d %b %Y')}"
-            + (f" | Investments from {start_date.strftime('%d %b %Y')} onward" if start_date is not None else "")
+            + _period_label(start_date, end_date)
         ),
         kpi_dict=kpi_dict,
         figures=report_figures,
