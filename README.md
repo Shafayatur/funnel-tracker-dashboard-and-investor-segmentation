@@ -40,8 +40,6 @@ spreadsheet with something they could actually filter and compare.
 
 Python · Streamlit · Pandas · Plotly · gspread
 
-Entry point: `app.py`
-
 ## Note
 
 Built during an AI/prompt-engineering internship for internal
